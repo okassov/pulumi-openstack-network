@@ -29,12 +29,14 @@ export class Network extends pulumi.ComponentResource {
     public readonly router: openstack.networking.Router;
     public readonly network: openstack.networking.Network;
     public readonly subnets: openstack.networking.Subnet[] = [];
+    private readonly baseName: string;
 
     constructor(name: string, args: NetworkComponentArgs, opts?: pulumi.ComponentResourceOptions) {
         super("okassov:openstack:Network", name, {}, opts);
 
         const provOpts = { parent: this, provider: opts?.provider } as pulumi.CustomResourceOptions;
         const baseName = name; // used as name prefix
+        this.baseName = baseName;
 
         /* Router */
         const routerName = `${baseName}-router`;
@@ -64,7 +66,7 @@ export class Network extends pulumi.ComponentResource {
         this.registerOutputs({
             routerId: this.router.id,
             networkId: this.network.id,
-            subnetIds: this.subnets.map(s => s.id),
+            subnetIds: this.subnetIds()
         });
     }
 
@@ -79,7 +81,7 @@ export class Network extends pulumi.ComponentResource {
             networkId: this.network.id,
         } as openstack.networking.SubnetArgs, { ...opts, parent: this.network });
 
-        this.subnets.push(subnet);
+        this.subnetMap[args.name] = subnet;
         
         /* Attach Subnet to Router Interface */
         new openstack.networking.RouterInterface(`${subnetName}-if`, {
@@ -96,8 +98,20 @@ export class Network extends pulumi.ComponentResource {
         } as openstack.networking.RouterRouteArgs, { ...opts, parent: this.router, dependsOn: this.subnets });
     }
 
+    private readonly subnetMap: Record<string, openstack.networking.Subnet> = {};
+
+    public subnetId(name: string): pulumi.Output<string> {
+        const s = this.subnetMap[name];
+        if (!s) {
+            throw new Error(`Subnet with logical name “${name}” not found in component “${this.baseName}”.`);
+        }
+        return s.id;
+    }
+
+    /** Array of all subnet IDs, kept for backward‑compatibility. */
     public subnetIds(): pulumi.Output<string>[] {
         return this.subnets.map(s => s.id);
     }
+
 }
 
