@@ -1,0 +1,39 @@
+{
+  "name": "@okassov/pulumi-openstack-network",
+  "version": "${VERSION}",
+  "description": "Openstack Network Module for Pulumi",
+  "author": "Okassov Marat <okassov.marat@gmail.com>",
+  "license": "MPL-2.0",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/okassov/pulumi-openstack-network.git"
+  },
+  "homepage": "https://github.com/okassov/pulumi-openstack-network",
+  "keywords": [
+    "pulumi",
+    "openstack",
+    "network"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
+    "prepare": "npm run build",
+    "test": "echo \"No tests specified\" && exit 0" 
+  },
+  "devDependencies": {
+    "@types/node": "^14",
+    "typescript": "^4.0.0"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.0.0",
+    "@pulumi/openstack": "^5.0.0"
+  }
+}
