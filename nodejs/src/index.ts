@@ -10,9 +10,18 @@ export interface CustomRouterRouteArgs extends Omit<openstack.networking.RouterR
     description: string;
 }
 
+export interface CustomPortArgs extends Omit<openstack.networking.PortArgs, "networkId" | "name"> {
+    name: string;
+    selfNetwork?: boolean; // default: false
+}
+
+export interface RouterWithPortsArgs extends openstack.networking.RouterArgs {
+    additionalPorts?: CustomPortArgs[];
+}
+
 export interface NetworkArgs extends Omit<openstack.networking.NetworkArgs, "name"> {
     /* Router configuration that will be created and connected to every subnet. */
-    routerConfig: openstack.networking.RouterArgs;
+    routerConfig: RouterWithPortsArgs;
     /* One or more subnets to create inside the network. */
     subnets?: CustomSubnetArgs[];
     /* Optional static routes to be added to the router *after* at least one interface is present. */
@@ -29,24 +38,27 @@ export class Network extends pulumi.ComponentResource {
     public readonly router: openstack.networking.Router;
     public readonly network: openstack.networking.Network;
     public readonly subnets: openstack.networking.Subnet[] = [];
+    public readonly ports: openstack.networking.Port[] = [];
+
+    private readonly subnetMap: Record<string, openstack.networking.Subnet> = {};
     private readonly baseName: string;
 
     constructor(name: string, args: NetworkComponentArgs, opts?: pulumi.ComponentResourceOptions) {
         super("okassov:openstack:Network", name, {}, opts);
 
-        const provOpts = { parent: this, provider: opts?.provider } as pulumi.CustomResourceOptions;
-        const baseName = name; // used as name prefix
-        this.baseName = baseName;
+        const provOpts: pulumi.CustomResourceOptions = { parent: this, provider: opts?.provider };
+        this.baseName = name;
 
         /* Router */
-        const routerName = `${baseName}-router`;
+        const { additionalPorts, ...routerArgs } = args.networkConfig.routerConfig;
+        const routerName = `${this.baseName}-router`;
         this.router = new openstack.networking.Router(routerName, {
-            ...args.networkConfig.routerConfig,
+            ...routerArgs,
             name: routerName,
         }, provOpts);
 
         /* Network */
-        const networkName = `${baseName}-net`;
+        const networkName = `${this.baseName}-net`;
         this.network = new openstack.networking.Network(networkName, {
             ...args.networkConfig,
             name: networkName,
@@ -56,23 +68,25 @@ export class Network extends pulumi.ComponentResource {
         } as unknown as openstack.networking.NetworkArgs, provOpts);
 
         /* Subnets + Router Interfaces */
-        args.networkConfig.subnets?.forEach((subnetCfg) =>
-            this.createSubnet(`${baseName}-subnet`, subnetCfg, provOpts));
+        args.networkConfig.subnets?.forEach(sub => this.createSubnet(sub, provOpts));
+
+        /* Additional Custom Router Ports */
+        additionalPorts?.forEach(p => this.createAdditionalPort(p, provOpts));
 
         /* Static Routes */
-        args.networkConfig.routes?.forEach((routeCfg) =>
-            this.createRoute(`${baseName}-route-${routeCfg.description}`, routeCfg, provOpts));
+        args.networkConfig.routes?.forEach(r => this.createRoute(r, provOpts));
 
         this.registerOutputs({
             routerId: this.router.id,
             networkId: this.network.id,
-            subnetIds: this.subnetIds()
+            subnetIds: this.subnetIds(),
+            portIds: this.ports.map(p => p.id),
         });
     }
 
-    private createSubnet(name: string, args: CustomSubnetArgs, opts: pulumi.CustomResourceOptions) {
+    private createSubnet(args: CustomSubnetArgs, opts: pulumi.CustomResourceOptions) {
 
-        const subnetName = `${name}-${args.name}`;
+        const subnetName = `${this.baseName}-subnet-${args.name}`;
         
         /* Create Subnet */
         const subnet = new openstack.networking.Subnet(subnetName, {
@@ -81,6 +95,7 @@ export class Network extends pulumi.ComponentResource {
             networkId: this.network.id,
         } as openstack.networking.SubnetArgs, { ...opts, parent: this.network });
 
+        this.subnets.push(subnet);
         this.subnetMap[args.name] = subnet;
         
         /* Attach Subnet to Router Interface */
@@ -90,25 +105,44 @@ export class Network extends pulumi.ComponentResource {
         }, { ...opts, parent: subnet, dependsOn: [this.router] });
     }
 
-    private createRoute(name: string, args: CustomRouterRouteArgs, opts: pulumi.CustomResourceOptions) {
-        const { description: _desc, ...routeArgs } = args; // _desc is only for naming
-        return new openstack.networking.RouterRoute(name, {
-            ...routeArgs,
+    private createAdditionalPort(args: CustomPortArgs, opts: pulumi.CustomResourceOptions) {
+        const portName = `${this.baseName}-port-${args.name}`;
+
+        const { selfNetwork, ...portArgs } = args;
+        const targetNetworkId = selfNetwork ? this.network.id : (args as any).networkId;
+        if (!targetNetworkId) {
+            throw new Error(`Port \"${args.name}\" must specify networkId when selfNetwork=false.`);
+        }
+
+        const port = new openstack.networking.Port(portName, {
+            ...args,
+            name: portName,
+            networkId: targetNetworkId,
+        } as openstack.networking.PortArgs, { ...opts, parent: this.network });
+
+        this.ports.push(port);
+
+        new openstack.networking.RouterInterface(`${portName}-if`, {
             routerId: this.router.id,
-        } as openstack.networking.RouterRouteArgs, { ...opts, parent: this.router, dependsOn: this.subnets });
+            portId: port.id,
+        }, { ...opts, parent: port, dependsOn: [this.router] });
     }
 
-    private readonly subnetMap: Record<string, openstack.networking.Subnet> = {};
+    private createRoute(args: CustomRouterRouteArgs, opts: pulumi.CustomResourceOptions) {
+        const { description, ...routeArgs } = args;
+        const routeName = `${this.baseName}-route-${description}`;
+        new openstack.networking.RouterRoute(routeName, {
+            ...routeArgs,
+            routerId: this.router.id,
+        }, { ...opts, parent: this.router, dependsOn: [...this.subnets, ...this.ports] });
+    }
 
     public subnetId(name: string): pulumi.Output<string> {
         const s = this.subnetMap[name];
-        if (!s) {
-            throw new Error(`Subnet with logical name “${name}” not found in component “${this.baseName}”.`);
-        }
+        if (!s) throw new Error(`Subnet \"${name}\" not found in component \"${this.baseName}\".`);
         return s.id;
     }
 
-    /** Array of all subnet IDs, kept for backward‑compatibility. */
     public subnetIds(): pulumi.Output<string>[] {
         return this.subnets.map(s => s.id);
     }
