@@ -5,7 +5,10 @@ export interface CustomSubnetArgs extends Omit<openstack.networking.SubnetArgs, 
     name: string;
 }
 
-export interface CustomRouterRouteArgs extends Omit<openstack.networking.RouterRouteArgs, "routerId"> {}
+export interface CustomRouterRouteArgs extends Omit<openstack.networking.RouterRouteArgs, "routerId"> {
+    /* Label inserted into the Pulumi resource name: `${baseName}-route-${description}` */
+    description: string;
+}
 
 export interface NetworkArgs extends Omit<openstack.networking.NetworkArgs, "name"> {
     /* Router configuration that will be created and connected to every subnet. */
@@ -51,12 +54,12 @@ export class Network extends pulumi.ComponentResource {
         } as unknown as openstack.networking.NetworkArgs, provOpts);
 
         /* Subnets + Router Interfaces */
-        args.networkConfig.subnets?.forEach((subnetCfg, idx) =>
-            this.createSubnet(`${baseName}-subnet-${idx + 1}`, subnetCfg, provOpts));
+        args.networkConfig.subnets?.forEach((subnetCfg) =>
+            this.createSubnet(`${baseName}-subnet`, subnetCfg, provOpts));
 
         /* Static Routes */
-        args.networkConfig.routes?.forEach((routeCfg, idx) =>
-            this.createRoute(`${baseName}-route-${idx + 1}`, routeCfg, provOpts));
+        args.networkConfig.routes?.forEach((routeCfg) =>
+            this.createRoute(`${baseName}-route-${routeCfg.description}`, routeCfg, provOpts));
 
         this.registerOutputs({
             routerId: this.router.id,
@@ -86,10 +89,11 @@ export class Network extends pulumi.ComponentResource {
     }
 
     private createRoute(name: string, args: CustomRouterRouteArgs, opts: pulumi.CustomResourceOptions) {
+        const { description: _desc, ...routeArgs } = args; // _desc is only for naming
         return new openstack.networking.RouterRoute(name, {
-            ...args,
+            ...routeArgs,
             routerId: this.router.id,
-        }, { ...opts, parent: this.router, dependsOn: this.subnets });
+        } as openstack.networking.RouterRouteArgs, { ...opts, parent: this.router, dependsOn: this.subnets });
     }
 
     public subnetIds(): pulumi.Output<string>[] {
