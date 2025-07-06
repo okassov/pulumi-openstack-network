@@ -10,7 +10,7 @@ export interface CustomRouterRouteArgs extends Omit<openstack.networking.RouterR
     description: string;
 }
 
-export interface CustomPortArgs extends Omit<openstack.networking.PortArgs, "networkId" | "name"> {
+export interface CustomPortArgs extends Omit<openstack.networking.PortArgs, "name"> {
     name: string;
     selfNetwork?: boolean; // default: false
 }
@@ -108,8 +108,8 @@ export class Network extends pulumi.ComponentResource {
     private createAdditionalPort(args: CustomPortArgs, opts: pulumi.CustomResourceOptions) {
         const portName = `${this.baseName}-port-${args.name}`;
 
-        const { selfNetwork, ...portArgs } = args;
-        const targetNetworkId = selfNetwork ? this.network.id : (args as any).networkId;
+        const { selfNetwork = false, networkId, ...portArgs } = args;
+        const targetNetworkId = selfNetwork ? this.network.id : networkId;
         if (!targetNetworkId) {
             throw new Error(`Port \"${args.name}\" must specify networkId when selfNetwork=false.`);
         }
